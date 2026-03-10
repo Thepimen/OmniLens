@@ -5,3 +5,6 @@ langchain
 langchain-openai
 langchain-chroma
 python-dotenv
+langchain-huggingface
+langchain-groq
+sentence-transformers

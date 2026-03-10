@@ -8,7 +8,7 @@ import whisper
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
-from rag_pipeline import process_and_store_embeddings
+from rag_pipeline import process_and_store_embeddings, ask_video_question
 
 # Make sure whisper can find ffmpeg.exe downloaded in this directory
 os.environ["PATH"] += os.pathsep + os.path.dirname(os.path.abspath(__file__))
@@ -31,6 +31,10 @@ app.add_middleware(
 class VideoProcessRequest(BaseModel):
     filePath: str
     jobId: str
+
+class ChatRequest(BaseModel):
+    video_id: str
+    question: str
 
 executor = ThreadPoolExecutor(max_workers=2)
 
@@ -85,6 +89,17 @@ def transcribe_audio(video_path):
 @app.get("/worker/health")
 async def health_check():
     return {"status": "AI Worker OK"}
+
+@app.post("/api/chat")
+async def chat_video(request: ChatRequest):
+    loop = asyncio.get_event_loop()
+    # Run the conversational pipeline in executor to prevent blocking
+    result = await loop.run_in_executor(
+        executor, ask_video_question, request.video_id, request.question
+    )
+    if result.get("status") == "error":
+        raise HTTPException(status_code=500, detail=result.get("reason"))
+    return result
 
 @app.post("/worker/process")
 async def process_video(request: VideoProcessRequest):

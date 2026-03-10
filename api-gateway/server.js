@@ -79,6 +79,26 @@ app.post('/api/upload', upload.single('video'), async (req, res) => {
     }
 });
 
+app.post('/api/chat', async (req, res) => {
+    try {
+        const { video_id, question } = req.body;
+
+        if (!video_id || !question) {
+            return res.status(400).json({ status: 'error', reason: 'Missing video_id or question' });
+        }
+
+        const pythonResponse = await axios.post('http://localhost:8001/api/chat', {
+            video_id,
+            question
+        });
+
+        res.json(pythonResponse.data);
+    } catch (error) {
+        console.error('Chat error:', error.message);
+        res.status(500).json({ status: 'error', reason: 'Failed to communicate with AI Worker for chat' });
+    }
+});
+
 // BullMQ Worker to process jobs
 const worker = new Worker('video-processing', async job => {
     io.emit('job_processing', { jobId: job.id, progress: 10, message: 'Starting AI analysis' });

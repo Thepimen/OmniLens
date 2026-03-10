@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { io, Socket } from 'socket.io-client';
-import { FiUploadCloud, FiFile, FiCheckCircle, FiActivity, FiVideo } from 'react-icons/fi';
+import { FiUploadCloud, FiFile, FiCheckCircle, FiActivity, FiVideo, FiSend, FiMessageSquare } from 'react-icons/fi';
 
 let socket: Socket;
 
@@ -17,6 +17,12 @@ export default function Home() {
   const [jobMessage, setJobMessage] = useState<string>('');
   const [jobProgress, setJobProgress] = useState<number>(0);
   const [jobResult, setJobResult] = useState<any>(null);
+
+  // Chat & Video State
+  const [messages, setMessages] = useState<{ role: 'user' | 'assistant', text: string }[]>([]);
+  const [chatInput, setChatInput] = useState<string>('');
+  const [isChatting, setIsChatting] = useState<boolean>(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
     // Initialize socket connection
@@ -77,6 +83,63 @@ export default function Home() {
     setJobProgress(0);
     setJobResult(null);
     setUploadProgress(0);
+    setMessages([]);
+    setChatInput('');
+  };
+
+  const parseTextWithTimestamps = (text: string) => {
+    // Matches [MM:SS] format
+    const parts = text.split(/(\[\d{2}:\d{2}\])/g);
+    return parts.map((part, index) => {
+      if (part.match(/\[\d{2}:\d{2}\]/)) {
+        const timeStr = part.replace('[', '').replace(']', '');
+        const [minutes, seconds] = timeStr.split(':').map(Number);
+        const totalSeconds = minutes * 60 + seconds;
+        return (
+          <button
+            key={index}
+            onClick={() => {
+              if (videoRef.current) {
+                videoRef.current.currentTime = totalSeconds;
+                videoRef.current.play();
+              }
+            }}
+            className="inline-flex items-center px-1.5 py-0.5 mx-1 rounded text-xs font-bold bg-indigo-100 text-indigo-800 hover:bg-indigo-300 transition-colors shadow-sm cursor-pointer whitespace-nowrap"
+          >
+            ▶ {timeStr}
+          </button>
+        );
+      }
+      return <span key={index}>{part}</span>;
+    });
+  };
+
+  const handleSendMessage = async () => {
+    if (!chatInput.trim() || !jobId) return;
+
+    const userMsg = chatInput;
+    setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
+    setChatInput('');
+    setIsChatting(true);
+
+    try {
+      const res = await fetch('http://localhost:4000/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ video_id: jobId, question: userMsg })
+      });
+      const data = await res.json();
+
+      if (data.status === 'success') {
+        setMessages(prev => [...prev, { role: 'assistant', text: data.answer }]);
+      } else {
+        setMessages(prev => [...prev, { role: 'assistant', text: 'Error: ' + data.reason }]);
+      }
+    } catch (error) {
+      setMessages(prev => [...prev, { role: 'assistant', text: 'Network connection failed.' }]);
+    } finally {
+      setIsChatting(false);
+    }
   };
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -140,20 +203,20 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col items-center py-12 px-4 sm:px-6 lg:px-8 bg-gradient-to-br from-indigo-50 via-white to-blue-50 font-sans">
-      <div className="w-full max-w-2xl space-y-8">
+    <div className="min-h-screen bg-gray-50 flex flex-col items-center py-12 px-4 sm:px-6 lg:px-8 bg-gradient-to-br from-[#f8fafc] via-white to-[#f1f5f9] font-sans">
+      <div className="w-full max-w-6xl space-y-8">
 
         {/* Header */}
         <div className="text-center">
-          <div className="mx-auto h-16 w-16 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg transform rotate-3 mb-6">
+          <div className="mx-auto h-16 w-16 bg-gradient-to-tr from-blue-600 to-indigo-500 rounded-2xl flex items-center justify-center shadow-indigo-500/30 shadow-lg transform rotate-3 mb-6">
             <FiVideo className="h-8 w-8 text-white -rotate-3" />
           </div>
-          <h1 className="text-4xl font-extrabold text-gray-900 tracking-tight mb-2">OmniLens</h1>
-          <p className="text-lg text-gray-500">Upload a video for AI-powered RAG indexing.</p>
+          <h1 className="text-4xl font-extrabold text-slate-800 tracking-tight mb-2">OmniLens</h1>
+          <p className="text-lg text-slate-500">Upload a video for AI-powered RAG indexing and interactive chat.</p>
         </div>
 
         {/* Main Card */}
-        <div className="bg-white shadow-2xl rounded-3xl p-8 border border-gray-100 transition-all duration-300">
+        <div className="bg-white/80 backdrop-blur-xl shadow-xl shadow-slate-200/50 rounded-[2rem] p-8 lg:p-12 border border-slate-100 transition-all duration-300">
 
           {/* Dropzone */}
           {!uploading && !jobStatus && (
@@ -238,22 +301,23 @@ export default function Home() {
               {jobResult && (
                 <div className="mt-8 bg-gray-50 border border-gray-100 rounded-2xl p-6 shadow-inner">
                   <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4 border-b pb-2">Extracted Metadata</h3>
-                  <div className="grid grid-cols-4 gap-4 text-center">
-                    <div className="bg-white p-3 rounded-xl shadow-sm border border-gray-100 text-gray-800">
-                      <p className="text-xs text-gray-500 mb-1">Duration</p>
-                      <p className="font-bold text-lg">{jobResult.metadata.duration_seconds}s</p>
+                  {/* Meta Data Row */}
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 text-center">
+                    <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 text-slate-800 transition hover:shadow-md">
+                      <p className="text-xs text-slate-400 font-medium mb-1 uppercase tracking-wider">Duration</p>
+                      <p className="font-bold text-xl">{jobResult.metadata.duration_seconds}s</p>
                     </div>
-                    <div className="bg-white p-3 rounded-xl shadow-sm border border-gray-100 text-gray-800">
-                      <p className="text-xs text-gray-500 mb-1">FPS</p>
-                      <p className="font-bold text-lg">{jobResult.metadata.fps}</p>
+                    <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 text-slate-800 transition hover:shadow-md">
+                      <p className="text-xs text-slate-400 font-medium mb-1 uppercase tracking-wider">FPS</p>
+                      <p className="font-bold text-xl">{jobResult.metadata.fps}</p>
                     </div>
-                    <div className="bg-white p-3 rounded-xl shadow-sm border border-gray-100 text-gray-800">
-                      <p className="text-xs text-gray-500 mb-1">Frames</p>
-                      <p className="font-bold text-lg">{jobResult.metadata.total_frames}</p>
+                    <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 text-slate-800 transition hover:shadow-md">
+                      <p className="text-xs text-slate-400 font-medium mb-1 uppercase tracking-wider">Frames</p>
+                      <p className="font-bold text-xl">{jobResult.metadata.total_frames}</p>
                     </div>
-                    <div className="bg-white p-3 rounded-xl shadow-sm border border-gray-100 text-gray-800">
-                      <p className="text-xs text-green-600 mb-1">AI Process Time</p>
-                      <p className="font-bold text-lg text-green-700">{jobResult.metadata.process_time_seconds}s</p>
+                    <div className="bg-gradient-to-br from-emerald-50 to-teal-50 p-4 rounded-2xl shadow-sm border border-emerald-100 text-emerald-800 transition hover:shadow-md">
+                      <p className="text-xs text-emerald-600 font-medium mb-1 uppercase tracking-wider">AI Process Time</p>
+                      <p className="font-bold text-xl text-emerald-700">{jobResult.metadata.process_time_seconds}s</p>
                     </div>
                   </div>
 
@@ -293,6 +357,105 @@ export default function Home() {
                       </div>
                     </div>
                   )}
+
+                  {/* Video Player & Chat Section Side-by-Side */}
+                  <div className="mt-12 border-t border-slate-100 pt-10 animate-fade-in-up">
+                    <h3 className="text-2xl font-bold text-slate-800 mb-8 flex items-center">
+                      <div className="p-2.5 bg-indigo-100 rounded-xl mr-4">
+                        <FiMessageSquare className="h-6 w-6 text-indigo-600" />
+                      </div>
+                      Interactive Analysis
+                      <span className="ml-4 px-3 py-1.5 bg-gradient-to-r from-emerald-400 to-teal-500 text-white text-[10px] rounded-full font-bold uppercase tracking-widest shadow-sm">Powered by LangChain & Vector DB</span>
+                    </h3>
+
+                    <div className="flex flex-col lg:flex-row gap-8 items-start">
+
+                      {/* Integrated Video Player - Takes up 40% on large screens */}
+                      <div className="w-full lg:w-[45%] bg-black rounded-[2rem] overflow-hidden shadow-2xl border-[6px] border-slate-800 flex items-center justify-center relative group aspect-video">
+                        {file ? (
+                          <video
+                            ref={videoRef}
+                            src={URL.createObjectURL(file)}
+                            controls
+                            className="w-full h-full object-contain bg-black"
+                          />
+                        ) : (
+                          <div className="text-slate-500 flex flex-col items-center">
+                            <FiVideo className="w-12 h-12 opacity-30 mb-3" />
+                            <p className="text-sm font-medium">Video playback unavailable</p>
+                          </div>
+                        )}
+                        <div className="absolute top-4 left-4 font-mono text-[10px] uppercase tracking-wider px-3 py-1.5 bg-black/70 text-white rounded-full backdrop-blur-md opacity-0 group-hover:opacity-100 transition-all duration-300 pointer-events-none">
+                          Source Video
+                        </div>
+                      </div>
+
+                      {/* Conversational UI - Takes up 60% on large screens */}
+                      <div className="w-full lg:w-[55%] flex flex-col bg-white border border-slate-200 rounded-[2rem] shadow-xl shadow-slate-200/50 h-[550px] overflow-hidden relative">
+
+                        {/* Chat Messages Area */}
+                        <div className="flex-1 overflow-y-auto p-6 lg:p-8 space-y-6 bg-slate-50">
+                          {messages.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center h-full text-center p-8 text-slate-400 fade-in">
+                              <div className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center mb-6 shadow-inner">
+                                <FiMessageSquare className="w-8 h-8 text-indigo-500" />
+                              </div>
+                              <p className="text-xl font-bold text-slate-600 mb-2">Vector Database Ready</p>
+                              <p className="text-sm leading-relaxed max-w-sm">Ask me any question about the video contents. I will search the transcript and cite the exact timestamp of where the answer is found.</p>
+                            </div>
+                          ) : (
+                            messages.map((msg, i) => (
+                              <div key={i} className={`flex w-full ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in-up`}>
+                                <div className={`max-w-[85%] rounded-3xl px-6 py-4 text-[15px] shadow-sm leading-relaxed ${msg.role === 'user'
+                                  ? 'bg-gradient-to-br from-indigo-500 to-blue-600 text-white rounded-tr-sm shadow-blue-500/20 font-medium whitespace-pre-wrap'
+                                  : 'bg-white border text-slate-700 border-slate-200/60 rounded-tl-sm'
+                                  }`}>
+                                  {msg.role === 'assistant' ? parseTextWithTimestamps(msg.text) : msg.text}
+                                </div>
+                              </div>
+                            ))
+                          )}
+
+                          {/* Loading Indicator */}
+                          {isChatting && (
+                            <div className="flex justify-start">
+                              <div className="bg-white border border-slate-200 text-slate-500 rounded-3xl rounded-tl-sm px-6 py-4 shadow-sm flex items-center space-x-2">
+                                <div className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce"></div>
+                                <div className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                                <div className="w-2 h-2 bg-indigo-600 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Input Area */}
+                        <div className="p-4 lg:p-5 bg-white border-t border-slate-100 flex items-center z-10 shadow-[0_-10px_40px_-15px_rgba(0,0,0,0.05)]">
+                          <input
+                            type="text"
+                            className="flex-1 bg-slate-100 border-transparent rounded-full px-6 py-4 text-sm focus:bg-white focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100/50 outline-none transition-all placeholder-slate-400 text-slate-700 font-medium"
+                            placeholder="Type your question..."
+                            value={chatInput}
+                            onChange={(e) => setChatInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && !e.shiftKey) {
+                                e.preventDefault();
+                                handleSendMessage();
+                              }
+                            }}
+                            disabled={isChatting}
+                            autoComplete="off"
+                          />
+                          <button
+                            onClick={handleSendMessage}
+                            disabled={isChatting || !chatInput.trim()}
+                            className="ml-4 flex-shrink-0 w-14 h-14 bg-indigo-600 text-white rounded-full hover:bg-indigo-700 hover:shadow-lg hover:shadow-indigo-500/30 disabled:bg-slate-300 disabled:shadow-none transition-all flex items-center justify-center transform active:scale-95"
+                          >
+                            <FiSend className="w-5 h-5 -ml-1 mt-0.5" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
 
                   <button
                     onClick={resetState}

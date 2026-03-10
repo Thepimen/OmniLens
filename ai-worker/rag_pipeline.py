@@ -1,15 +1,23 @@
 import os
 from typing import List, Dict, Any
 from langchain_core.documents import Document
-from langchain_openai import OpenAIEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_groq import ChatGroq
 from langchain_chroma import Chroma
+from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough
 from dotenv import load_dotenv
 
-# Load environment variables (OPENAI_API_KEY)
+# Load environment variables (OPENAI_API_KEY, GROQ_API_KEY)
 load_dotenv()
 
 # We'll store ChromaDB locally in the ai-worker directory for now
 CHROMA_DB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chroma_db")
+
+# Initialize HuggingFace embeddings globally to avoid reloading the model on every request
+# all-MiniLM-L6-v2 is a small, fast, and capable sentence-transformer
+embed_model = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
 def chunk_whisper_segments(segments: List[Dict[str, Any]], video_id: str, target_chunk_size: int = 500) -> List[Document]:
     """
@@ -85,19 +93,11 @@ def process_and_store_embeddings(segments: List[Dict[str, Any]], video_id: str):
         # 1. Chunk the segments
         documents = chunk_whisper_segments(segments, video_id, target_chunk_size=500)
         print(f"[{video_id}] Created {len(documents)} document chunks.")
-        
-        # 2. Check for OpenAI key
-        if not os.environ.get("OPENAI_API_KEY"):
-            print(f"[{video_id}] WARNING: OPENAI_API_KEY not found. Skipping embeddings.")
-            return {"status": "skipped", "reason": "No OpenAI API Key provided.", "chunks_created": len(documents)}
             
-        # 3. Initialize Embeddings
-        embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-        
-        # 4. Store in Chroma
+        # 2. Store in Chroma using the local HuggingFace embeddings
         vector_store = Chroma.from_documents(
             documents=documents,
-            embedding=embeddings,
+            embedding=embed_model,
             persist_directory=CHROMA_DB_DIR
         )
         print(f"[{video_id}] Successfully saved {len(documents)} chunks to ChromaDB at {CHROMA_DB_DIR}")
@@ -106,4 +106,83 @@ def process_and_store_embeddings(segments: List[Dict[str, Any]], video_id: str):
         
     except Exception as e:
         print(f"[{video_id}] Error in RAG pipeline: {e}")
+        return {"status": "error", "reason": str(e)}
+
+def format_docs(docs: List[Document]) -> str:
+    """Formats retrieved documents to include timestamps for the prompt."""
+    formatted = []
+    for d in docs:
+        start = d.metadata.get("start_time", 0.0)
+        # Convert seconds to MM:SS
+        minutes = int(start // 60)
+        seconds = int(start % 60)
+        time_str = f"[{minutes:02d}:{seconds:02d}]"
+        formatted.append(f"Context {time_str}: {d.page_content}")
+    return "\n\n".join(formatted)
+
+def ask_video_question(video_id: str, question: str) -> dict:
+    """
+    Retrieves context for a video_id from ChromaDB and uses LangChain LCEL
+    to generate an answer citing the exact timestamps.
+    """
+    try:
+        if not os.environ.get("GROQ_API_KEY"):
+            return {"status": "error", "reason": "GROQ_API_KEY is missing from .env"}
+
+        # Connect to existing ChromaDB
+        vector_store = Chroma(persist_directory=CHROMA_DB_DIR, embedding_function=embed_model)
+        
+        # 1. Setup Retriever (filter by video_id)
+        retriever = vector_store.as_retriever(
+            search_kwargs={"k": 4, "filter": {"video_id": video_id}}
+        )
+        
+        # 2. Prompt Engineering
+        # Strict instructions to use the [MM:SS] format from the formatted docs
+        prompt_template = """You are an AI assistant analyzing a video.
+Use the following pieces of retrieved context to answer the question.
+Each piece of context has a timestamp in the format [MM:SS].
+When you use information from a context piece, you MUST cite its exact timestamp in your answer.
+Example: "The marketing budget was reduced by 20% [12:34]."
+If you don't know the answer, just say that you don't know.
+
+Context:
+{context}
+
+Question: {question}
+
+Answer:"""
+        prompt = PromptTemplate.from_template(prompt_template)
+        
+        # 3. LLM Setup - Using Groq's high-speed cloud endpoint
+        llm = ChatGroq(model_name="llama-3.1-8b-instant", temperature=0)
+        
+        # 4. LCEL Generation Chain
+        rag_chain = (
+            {"context": retriever | format_docs, "question": RunnablePassthrough()}
+            | prompt
+            | llm
+            | StrOutputParser()
+        )
+        
+        # To also return the sources for debugging/frontend, we invoke the retriever separately
+        docs = retriever.invoke(question)
+        answer = rag_chain.invoke(question)
+        
+        sources = [
+            {
+                "text": d.page_content,
+                "start_time": d.metadata.get("start_time"),
+                "end_time": d.metadata.get("end_time")
+            } for d in docs
+        ]
+        
+        return {
+            "status": "success",
+            "answer": answer,
+            "sources": sources
+        }
+        
+    except Exception as e:
+        print(f"[{video_id}] Error in chat pipeline: {e}")
         return {"status": "error", "reason": str(e)}
