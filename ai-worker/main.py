@@ -8,6 +8,8 @@ import whisper
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
+from rag_pipeline import process_and_store_embeddings
+
 # Make sure whisper can find ffmpeg.exe downloaded in this directory
 os.environ["PATH"] += os.pathsep + os.path.dirname(os.path.abspath(__file__))
 
@@ -69,10 +71,16 @@ def transcribe_audio(video_path):
     try:
         # Whisper can process video files directly (FFmpeg extracts audio under the hood)
         result = whisper_model.transcribe(video_path, fp16=False) # fp16=False for CPU environments
-        return result["text"].strip()
+        return {
+            "text": result["text"].strip(),
+            "segments": result.get("segments", [])
+        }
     except Exception as e:
         print(f"Transcription error: {e}")
-        return f"Transcription unavailable. Error: {str(e)[:50]}"
+        return {
+            "text": f"Transcription unavailable. Error: {str(e)[:50]}",
+            "segments": []
+        }
 
 @app.get("/worker/health")
 async def health_check():
@@ -112,9 +120,21 @@ async def process_video(request: VideoProcessRequest):
         )
         
         # Wait for both tasks to complete
-        extracted_frames, transcript = await asyncio.gather(
+        extracted_frames, transcript_result = await asyncio.gather(
             extracted_frames_task, transcript_task
         )
+        
+        # 3. Embed and Store in Vector DB
+        embedding_result = None
+        if transcript_result.get("segments"):
+            # Run embeddings in executor to avoid blocking
+            embedding_task = loop.run_in_executor(
+                executor, 
+                process_and_store_embeddings, 
+                transcript_result["segments"], 
+                request.jobId
+            )
+            embedding_result = await embedding_task
         
         process_time = round(time.time() - start_time, 2)
         print(f"Finished processing job {request.jobId} in {process_time}s")
@@ -127,8 +147,9 @@ async def process_video(request: VideoProcessRequest):
                 "total_frames": total_frames,
                 "process_time_seconds": process_time
             },
-            "transcript": transcript,
+            "transcript": transcript_result["text"],
             "keyframes": extracted_frames,
+            "embeddings": embedding_result,
             "message": "AI Processing Complete"
         }
     except Exception as e:
