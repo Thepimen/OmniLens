@@ -1,0 +1,7 @@
+src/app/page.tsx(225,16): error TS2322: Type '{ children: Element[]; initial: { opacity: number; y: number; }; animate: { opacity: number; y: number; }; whileHover: { scale: number; }; transition: { type: "spring"; stiffness: number; damping: number; }; ... 278 more ...; onTransitionStartCapture?: TransitionEventHandler<...> | undefined; }' is not assignable to type 'Omit<HTMLMotionProps<"div">, "ref">'.
+  Types of property 'onAnimationStart' are incompatible.
+    Type 'AnimationEventHandler<HTMLElement> | undefined' is not assignable to type '((definition: AnimationDefinition) => void) | undefined'.
+      Type 'AnimationEventHandler<HTMLElement>' is not assignable to type '(definition: AnimationDefinition) => void'.
+        Types of parameters 'event' and 'definition' are incompatible.
+          Type 'AnimationDefinition' is not assignable to type 'AnimationEvent<HTMLElement>'.
+            Type 'string' is not assignable to type 'AnimationEvent<HTMLElement>'.

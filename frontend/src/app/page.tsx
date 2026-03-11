@@ -3,7 +3,11 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { io, Socket } from 'socket.io-client';
-import { FiUploadCloud, FiFile, FiCheckCircle, FiActivity, FiVideo, FiSend, FiMessageSquare } from 'react-icons/fi';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  UploadCloud, FileVideo, Activity, Video, Send, MessageSquare, Plus,
+  Settings, Download, Trash2, MoreVertical, X
+} from 'lucide-react';
 
 let socket: Socket;
 
@@ -23,50 +27,41 @@ export default function Home() {
   const [chatInput, setChatInput] = useState<string>('');
   const [isChatting, setIsChatting] = useState<boolean>(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Auto scroll chat
+  useEffect(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages, isChatting]);
 
   useEffect(() => {
-    // Initialize socket connection
     socket = io('http://localhost:4000');
-
-    socket.on('connect', () => {
-      console.log('Connected to API Gateway via WebSocket');
-    });
-
+    socket.on('connect', () => console.log('Connected to API Gateway via WebSocket'));
     socket.on('job_queued', (data: any) => {
       if (data.filename === file?.name || !file) {
-        setJobId(data.jobId);
-        setJobStatus('queued');
-        setJobMessage('Video queued for processing...');
+        setJobId(data.jobId); setJobStatus('queued'); setJobMessage('Video queued for processing...');
       }
     });
-
     socket.on('job_processing', (data: any) => {
       if (data.jobId === jobId) {
-        setJobStatus('processing');
-        setJobProgress(data.progress);
+        setJobStatus('processing'); setJobProgress(data.progress);
         if (data.message) setJobMessage(data.message);
       }
     });
-
     socket.on('job_completed', (data: any) => {
       if (data.jobId === jobId) {
-        setJobStatus('completed');
-        setJobProgress(100);
-        setJobMessage('Processing complete!');
+        setJobStatus('completed'); setJobProgress(100); setJobMessage('Processing complete!');
         setJobResult(data.result);
       }
     });
-
     socket.on('job_failed', (data: any) => {
       if (data.jobId === jobId) {
-        setJobStatus('error');
-        setJobMessage(`Error: ${data.error}`);
+        setJobStatus('error'); setJobMessage(`Error: ${data.error}`);
       }
     });
-
-    return () => {
-      socket.disconnect();
-    };
+    return () => { socket.disconnect(); };
   }, [jobId, file]);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
@@ -77,18 +72,14 @@ export default function Home() {
   }, []);
 
   const resetState = () => {
-    setJobId(null);
-    setJobStatus('');
-    setJobMessage('');
-    setJobProgress(0);
-    setJobResult(null);
-    setUploadProgress(0);
-    setMessages([]);
-    setChatInput('');
+    setFile(null);
+    setJobId(null); setJobStatus(''); setJobMessage(''); setJobProgress(0); setJobResult(null);
+    setUploadProgress(0); setMessages([]); setChatInput(''); setUploading(false);
   };
 
+  const resetChat = () => setMessages([]);
+
   const parseTextWithTimestamps = (text: string) => {
-    // Matches [MM:SS] format
     const parts = text.split(/(\[\d{2}:\d{2}\])/g);
     return parts.map((part, index) => {
       if (part.match(/\[\d{2}:\d{2}\]/)) {
@@ -104,7 +95,7 @@ export default function Home() {
                 videoRef.current.play();
               }
             }}
-            className="inline-flex items-center px-1.5 py-0.5 mx-1 rounded text-xs font-bold bg-indigo-100 text-indigo-800 hover:bg-indigo-300 transition-colors shadow-sm cursor-pointer whitespace-nowrap"
+            className="inline-flex items-center px-2 py-0.5 mx-1 rounded-full text-xs font-bold bg-teal-500/20 text-teal-300 hover:bg-teal-500/40 border border-teal-500/30 transition-colors shadow-sm cursor-pointer whitespace-nowrap"
           >
             ▶ {timeStr}
           </button>
@@ -116,7 +107,6 @@ export default function Home() {
 
   const handleSendMessage = async () => {
     if (!chatInput.trim() || !jobId) return;
-
     const userMsg = chatInput;
     setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
     setChatInput('');
@@ -129,7 +119,6 @@ export default function Home() {
         body: JSON.stringify({ video_id: jobId, question: userMsg })
       });
       const data = await res.json();
-
       if (data.status === 'success') {
         setMessages(prev => [...prev, { role: 'assistant', text: data.answer }]);
       } else {
@@ -143,343 +132,367 @@ export default function Home() {
   };
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop,
-    accept: {
-      'video/mp4': ['.mp4'],
-      'video/quicktime': ['.mov'],
-      'video/x-m4v': ['.m4v']
-    },
-    maxFiles: 1
+    onDrop, accept: { 'video/mp4': ['.mp4'], 'video/quicktime': ['.mov'], 'video/x-m4v': ['.m4v'] }, maxFiles: 1
   });
 
   const uploadVideo = async () => {
     if (!file) return;
+    setUploading(true); setUploadProgress(0); setJobStatus('uploading'); setJobMessage('Uploading to server...');
 
-    setUploading(true);
-    setUploadProgress(0);
-    setJobStatus('uploading');
-    setJobMessage('Uploading file to server...');
-
-    const formData = new FormData();
-    formData.append('video', file);
+    const formData = new FormData(); formData.append('video', file);
 
     try {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', 'http://localhost:4000/api/upload', true);
-
       xhr.upload.onprogress = (event) => {
         if (event.lengthComputable) {
-          const percentComplete = Math.round((event.loaded / event.total) * 100);
-          setUploadProgress(percentComplete);
+          setUploadProgress(Math.round((event.loaded / event.total) * 100));
         }
       };
-
       xhr.onload = () => {
         if (xhr.status === 200) {
           const response = JSON.parse(xhr.responseText);
-          setJobId(response.jobId);
-          setJobStatus('queued');
-          setJobMessage('Upload complete. Waiting in queue...');
+          setJobId(response.jobId); setJobStatus('queued'); setJobMessage('Upload complete. Waiting in queue...');
         } else {
-          setJobStatus('error');
-          setJobMessage('Upload failed.');
+          setJobStatus('error'); setJobMessage('Upload failed.');
         }
         setUploading(false);
       };
-
       xhr.onerror = () => {
-        setJobStatus('error');
-        setJobMessage('Network error occurred during upload.');
-        setUploading(false);
+        setJobStatus('error'); setJobMessage('Network error occurred.'); setUploading(false);
       };
-
       xhr.send(formData);
     } catch (error) {
-      console.error(error);
-      setUploading(false);
-      setJobStatus('error');
-      setJobMessage('Failed to trigger upload.');
+      setUploading(false); setJobStatus('error'); setJobMessage('Failed to trigger upload.');
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col items-center py-12 px-4 sm:px-6 lg:px-8 bg-gradient-to-br from-[#f8fafc] via-white to-[#f1f5f9] font-sans">
-      <div className="w-full max-w-6xl space-y-8">
-
-        {/* Header */}
-        <div className="text-center">
-          <div className="mx-auto h-16 w-16 bg-gradient-to-tr from-blue-600 to-indigo-500 rounded-2xl flex items-center justify-center shadow-indigo-500/30 shadow-lg transform rotate-3 mb-6">
-            <FiVideo className="h-8 w-8 text-white -rotate-3" />
-          </div>
-          <h1 className="text-4xl font-extrabold text-slate-800 tracking-tight mb-2">OmniLens</h1>
-          <p className="text-lg text-slate-500">Upload a video for AI-powered RAG indexing and interactive chat.</p>
-        </div>
-
-        {/* Main Card */}
-        <div className="bg-white/80 backdrop-blur-xl shadow-xl shadow-slate-200/50 rounded-[2rem] p-8 lg:p-12 border border-slate-100 transition-all duration-300">
-
-          {/* Dropzone */}
-          {!uploading && !jobStatus && (
-            <div
-              {...getRootProps()}
-              className={`border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all duration-200 ease-in-out
-                ${isDragActive ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-blue-400 hover:bg-gray-50'}`}
-            >
-              <input {...getInputProps()} />
-              <FiUploadCloud className={`mx-auto h-12 w-12 mb-4 ${isDragActive ? 'text-blue-500' : 'text-gray-400'}`} />
-              {isDragActive ? (
-                <p className="text-blue-600 font-medium text-lg">Drop the video here...</p>
-              ) : (
-                <div>
-                  <p className="text-gray-700 font-medium text-lg mb-1">Drag & drop your video here</p>
-                  <p className="text-gray-400 text-sm">or click to browse from your computer</p>
-                  <p className="text-xs text-gray-400 mt-4 font-mono select-none bg-gray-100 inline-block px-2 py-1 rounded">MP4, MOV up to 500MB</p>
-                </div>
-              )}
+    <div className="h-screen w-full flex flex-col bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-indigo-950 via-slate-950 to-black text-slate-100 relative overflow-hidden font-sans">
+      
+      {/* Floating Header */}
+      <header className="absolute top-0 w-full z-50 px-6 py-4 flex justify-between items-center pointer-events-none">
+         <div className="flex items-center gap-3 pointer-events-auto select-none">
+            <div className="h-10 w-10 bg-gradient-to-tr from-teal-500 to-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/30 font-bold text-white text-xl">
+               <Video className="w-5 h-5 text-white" />
             </div>
-          )}
+            <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-teal-400 to-indigo-400 tracking-tight">OmniLens</h1>
+         </div>
 
-          {/* Selected File Overview */}
-          {file && !jobStatus && (
-            <div className="mt-6">
-              <div className="flex items-center p-4 bg-indigo-50 border border-indigo-100 rounded-xl">
-                <div className="p-3 bg-white rounded-lg shadow-sm mr-4">
-                  <FiFile className="h-6 w-6 text-indigo-600" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-gray-900 truncate">{file.name}</p>
-                  <p className="text-xs text-gray-500">{(file.size / (1024 * 1024)).toFixed(2)} MB</p>
-                </div>
-                <button
-                  onClick={(e) => { e.stopPropagation(); setFile(null); }}
-                  className="text-gray-400 hover:text-red-500 px-3 transition-colors"
-                >
-                  Clear
-                </button>
-              </div>
-
-              <button
-                onClick={uploadVideo}
-                className="mt-6 w-full flex items-center justify-center px-8 py-4 border border-transparent text-base font-medium rounded-xl text-white bg-blue-600 hover:bg-blue-700 md:text-lg transition-all shadow-md hover:shadow-lg active:scale-[0.98]"
+         <div className="flex items-center gap-4 pointer-events-auto">
+            {/* New Upload Button */}
+            {file && (
+              <motion.button 
+                 whileHover={{ scale: 1.05 }}
+                 whileTap={{ scale: 0.95 }}
+                 onClick={resetState}
+                 className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 backdrop-blur-md rounded-full text-sm font-medium border border-white/10 transition-colors shadow-lg"
               >
-                Upload & Process Video
-              </button>
-            </div>
-          )}
+                <Plus className="w-4 h-4" />
+                <span>New Upload</span>
+              </motion.button>
+            )}
 
-          {/* Progress State */}
-          {jobStatus && (
-            <div className="mt-4 space-y-6 animate-fade-in-up">
-
-              <div className="flex items-center justify-between text-sm font-medium text-gray-700 mb-2">
-                <span className="flex items-center">
-                  {jobStatus === 'completed' ? (
-                    <FiCheckCircle className="text-green-500 mr-2 h-5 w-5" />
-                  ) : jobStatus === 'error' ? (
-                    <div className="h-3 w-3 bg-red-500 rounded-full mr-2 animate-pulse" />
-                  ) : (
-                    <FiActivity className="text-blue-500 mr-2 h-5 w-5 animate-spin-slow" />
-                  )}
-                  {jobMessage}
-                </span>
-
-                {jobStatus === 'uploading' && <span>{uploadProgress}%</span>}
-                {(jobStatus === 'processing' || jobStatus === 'queued') && <span>{jobProgress}%</span>}
-              </div>
-
-              {/* Progress Bar */}
-              {(jobStatus === 'uploading' || jobStatus === 'processing' || jobStatus === 'queued') && (
-                <div className="w-full bg-gray-100 rounded-full h-2.5 overflow-hidden">
-                  <div
-                    className="bg-blue-600 h-2.5 rounded-full transition-all duration-500 ease-out"
-                    style={{ width: `${jobStatus === 'uploading' ? uploadProgress : jobProgress}%` }}
-                  ></div>
-                </div>
-              )}
-
-              {/* Results */}
-              {jobResult && (
-                <div className="mt-8 bg-gray-50 border border-gray-100 rounded-2xl p-6 shadow-inner">
-                  <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4 border-b pb-2">Extracted Metadata</h3>
-                  {/* Meta Data Row */}
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 text-center">
-                    <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 text-slate-800 transition hover:shadow-md">
-                      <p className="text-xs text-slate-400 font-medium mb-1 uppercase tracking-wider">Duration</p>
-                      <p className="font-bold text-xl">{jobResult.metadata.duration_seconds}s</p>
-                    </div>
-                    <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 text-slate-800 transition hover:shadow-md">
-                      <p className="text-xs text-slate-400 font-medium mb-1 uppercase tracking-wider">FPS</p>
-                      <p className="font-bold text-xl">{jobResult.metadata.fps}</p>
-                    </div>
-                    <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 text-slate-800 transition hover:shadow-md">
-                      <p className="text-xs text-slate-400 font-medium mb-1 uppercase tracking-wider">Frames</p>
-                      <p className="font-bold text-xl">{jobResult.metadata.total_frames}</p>
-                    </div>
-                    <div className="bg-gradient-to-br from-emerald-50 to-teal-50 p-4 rounded-2xl shadow-sm border border-emerald-100 text-emerald-800 transition hover:shadow-md">
-                      <p className="text-xs text-emerald-600 font-medium mb-1 uppercase tracking-wider">AI Process Time</p>
-                      <p className="font-bold text-xl text-emerald-700">{jobResult.metadata.process_time_seconds}s</p>
-                    </div>
+            {/* Dropdown Menu */}
+            <div className="relative group">
+               <button className="p-2.5 bg-white/5 hover:bg-white/10 rounded-full backdrop-blur-md border border-white/10 transition-colors">
+                  <MoreVertical className="w-5 h-5 text-slate-300" />
+               </button>
+               
+               <div className="absolute right-0 mt-2 w-56 rounded-xl bg-slate-900 border border-white/10 shadow-2xl shadow-black/50 overflow-hidden opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all origin-top-right transform scale-95 group-hover:scale-100 duration-200">
+                  <div className="p-1">
+                    <button onClick={resetChat} className="w-full flex items-center gap-3 px-3 py-2 text-sm text-red-400 hover:bg-white/5 rounded-lg transition-colors">
+                       <Trash2 className="w-4 h-4" /> Clear Chat
+                    </button>
+                    <button className="w-full flex items-center gap-3 px-3 py-2 text-sm text-slate-300 hover:bg-white/5 rounded-lg transition-colors">
+                       <Download className="w-4 h-4" /> Export Transcript
+                    </button>
+                    <div className="h-px bg-white/10 my-1 mx-2"></div>
+                    <button className="w-full flex items-center gap-3 px-3 py-2 text-sm text-slate-300 hover:bg-white/5 rounded-lg transition-colors">
+                       <Settings className="w-4 h-4" /> Settings
+                    </button>
                   </div>
+               </div>
+            </div>
+         </div>
+      </header>
 
-                  {/* Transcript Section */}
-                  {jobResult.transcript && (
-                    <div className="mt-8">
-                      <h4 className="text-sm font-bold text-gray-700 mb-3 flex items-center">
-                        <svg className="w-5 h-5 mr-2 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg>
-                        Whisper Audio Transcription
-                      </h4>
-                      <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200 text-gray-700 text-sm overflow-y-auto w-full text-left font-serif leading-relaxed max-h-48">
-                        {jobResult.transcript}
-                      </div>
+      {/* Main Content Area */}
+      <main className="flex-1 w-full h-full pt-20 pb-6 px-6 overflow-hidden flex flex-col z-10">
+        {!file ? (
+           // Dropzone Full Screen Center
+           <div {...getRootProps()} className="flex-1 flex flex-col items-center justify-center relative outline-none">
+              <input {...getInputProps()} />
+              <motion.div 
+                 initial={{ opacity: 0, y: 20 }}
+                 animate={{ opacity: 1, y: 0 }}
+                 whileHover={{ scale: 1.02 }}
+                 transition={{ type: "spring", stiffness: 300, damping: 20 }}
+                 className={`w-full max-w-2xl aspect-video rounded-[2rem] border backdrop-blur-xl flex flex-col items-center justify-center p-12 text-center cursor-pointer transition-colors duration-300 relative overflow-hidden group
+                    ${isDragActive ? 'bg-indigo-500/10 border-indigo-500/50 shadow-[0_0_60px_rgba(99,102,241,0.2)]' : 'bg-white/5 border-white/10 hover:bg-white/10 hover:border-white/20 hover:shadow-2xl hover:shadow-indigo-500/10'}`}
+              >
+                  {/* Glowing background inside dropzone during drag */}
+                  <AnimatePresence>
+                     {isDragActive && (
+                        <motion.div 
+                           initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                           className="absolute inset-0 bg-gradient-to-tr from-indigo-500/20 to-teal-500/20 animate-pulse" 
+                        />
+                     )}
+                  </AnimatePresence>
+                 
+                 <div className="relative z-10 flex flex-col items-center pointer-events-none">
+                    <motion.div
+                       animate={isDragActive ? { y: -10, scale: 1.1 } : { y: 0, scale: 1 }}
+                       transition={{ type: "spring", stiffness: 400, damping: 25 }}
+                       className={`w-24 h-24 mb-6 rounded-full flex items-center justify-center border transition-colors duration-300
+                          ${isDragActive ? 'bg-teal-500/20 border-teal-500/30 shadow-[0_0_30px_rgba(45,212,191,0.3)]' : 'bg-gradient-to-tr from-indigo-500/20 to-teal-500/20 border-white/10 group-hover:border-indigo-500/30'}`}
+                    >
+                       <UploadCloud className={`w-12 h-12 transition-colors duration-300 ${isDragActive ? 'text-teal-400' : 'text-indigo-400'}`} />
+                    </motion.div>
+                    <h2 className={`text-2xl font-bold mb-3 transition-colors duration-300 ${isDragActive ? 'text-teal-300' : 'text-slate-200'}`}>
+                       {isDragActive ? 'Drop it like it\'s hot!' : 'Drag & drop your magical video'}
+                    </h2>
+                    <p className="text-slate-400 mb-8 font-medium">or click anywhere to browse from your computer</p>
+                    <div className="flex gap-3 text-xs font-mono text-slate-400">
+                       <span className="px-3 py-1.5 bg-black/40 rounded-lg border border-white/5 backdrop-blur-md font-semibold">MP4</span>
+                       <span className="px-3 py-1.5 bg-black/40 rounded-lg border border-white/5 backdrop-blur-md font-semibold">MOV</span>
+                       <span className="px-3 py-1.5 bg-black/40 rounded-lg border border-white/5 backdrop-blur-md font-semibold">Max 500MB</span>
                     </div>
+                 </div>
+              </motion.div>
+           </div>
+        ) : (
+           // Two Panel App Layout
+           <div className="flex-1 flex flex-col lg:flex-row gap-6 overflow-hidden max-h-full">
+               
+               {/* Left Panel: Video & Metadata */}
+               <div className="w-full lg:w-1/2 flex flex-col gap-6 overflow-y-auto pr-2 custom-scrollbar pb-6 rounded-3xl">
+                  
+                  {/* Upload State / Selected File Info */}
+                  {!jobStatus && (
+                     <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="bg-white/5 backdrop-blur-2xl border border-white/10 rounded-3xl p-6 shadow-2xl flex flex-col justify-center min-h-[50%]">
+                        <div className="flex items-center justify-between mb-8">
+                           <div className="flex items-center gap-5">
+                              <div className="w-16 h-16 bg-gradient-to-br from-indigo-500/20 to-teal-500/10 rounded-2xl flex items-center justify-center border border-indigo-500/30 shadow-inner">
+                                 <FileVideo className="w-8 h-8 text-indigo-400" />
+                              </div>
+                              <div>
+                                 <h3 className="text-xl font-bold text-slate-100 truncate max-w-sm">{file.name}</h3>
+                                 <p className="text-sm text-slate-400 mt-1 font-mono">{(file.size / (1024 * 1024)).toFixed(2)} MB</p>
+                              </div>
+                           </div>
+                           <button onClick={(e) => { e.stopPropagation(); setFile(null); }} className="p-3 bg-white/5 hover:bg-white/10 rounded-full transition-colors border border-transparent hover:border-white/10">
+                              <X className="w-5 h-5 text-slate-400" />
+                           </button>
+                        </div>
+                        <motion.button 
+                           whileHover={{ scale: 1.02 }}
+                           whileTap={{ scale: 0.98 }}
+                           onClick={uploadVideo} 
+                           className="w-full py-5 bg-gradient-to-r from-indigo-600 to-teal-500 hover:from-indigo-500 hover:to-teal-400 text-white text-lg font-bold rounded-2xl shadow-lg shadow-indigo-500/25 transition-all flex items-center justify-center gap-3 group"
+                        >
+                           <UploadCloud className="w-6 h-6 group-hover:-translate-y-1 transition-transform" /> 
+                           Start Processing
+                        </motion.button>
+                     </motion.div>
                   )}
 
-                  {/* Keyframes Section */}
-                  {jobResult.keyframes && jobResult.keyframes.length > 0 && (
-                    <div className="mt-8">
-                      <h4 className="text-sm font-bold text-gray-700 mb-3 flex items-center">
-                        <svg className="w-5 h-5 mr-2 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
-                        Extracted Scene Keyframes ({jobResult.keyframes.length})
-                      </h4>
-                      <div className="flex gap-3 overflow-x-auto pb-4 pt-2">
-                        {jobResult.keyframes.map((kf: any, idx: number) => (
-                          <div key={idx} className="flex-shrink-0 relative group rounded-xl overflow-hidden shadow-sm border border-gray-200 hover:shadow-md transition-all">
-                            <img
-                              src={`http://localhost:4000${kf.path}`}
-                              alt={`Frame at ${kf.time}s`}
-                              className="h-32 w-auto object-cover"
-                            />
-                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                              <span className="text-white text-xs font-semibold px-2 py-1 bg-black/60 rounded backdrop-blur-sm">{kf.time}s</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
+                  {/* Processing Status Panel */}
+                  {jobStatus && jobStatus !== 'completed' && jobStatus !== 'error' && (
+                     <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="bg-white/5 backdrop-blur-2xl border border-white/10 rounded-3xl p-10 shadow-2xl flex flex-col items-center justify-center text-center min-h-[50%] relative overflow-hidden">
+                        {/* Background glow */}
+                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-indigo-500/20 rounded-full blur-[80px] pointer-events-none"></div>
+
+                        <div className="relative w-28 h-28 mb-8">
+                           <div className="absolute inset-0 rounded-full border-t-[3px] border-indigo-500 animate-[spin_2s_linear_infinite]"></div>
+                           <div className="absolute inset-2 rounded-full border-r-[3px] border-teal-500 animate-[spin_3s_linear_infinite_reverse]"></div>
+                           <div className="absolute inset-0 flex items-center justify-center">
+                              <Activity className="w-10 h-10 text-indigo-400 animate-pulse" />
+                           </div>
+                        </div>
+                        <h3 className="text-2xl font-bold text-slate-100 mb-3 tracking-tight">{jobMessage}</h3>
+                        <p className="text-slate-400 text-base mb-10 max-w-sm">Analyzing frames, transcribing audio, building RAG index for instant search...</p>
+                        
+                        {/* Glowing Progress Bar */}
+                        <div className="w-full max-w-md bg-black/40 rounded-full h-4 overflow-hidden border border-white/10 relative p-1 shadow-inner">
+                           <motion.div 
+                              className="h-full bg-gradient-to-r from-indigo-500 via-blue-500 to-teal-400 rounded-full relative shadow-[0_0_20px_rgba(45,212,191,0.6)]"
+                              initial={{ width: 0 }}
+                              animate={{ width: `${jobStatus === 'uploading' ? uploadProgress : jobProgress}%` }}
+                              transition={{ ease: "circOut", duration: 0.5 }}
+                           >
+                              <div className="absolute right-0 top-0 bottom-0 w-8 bg-white/50 blur-[3px] rounded-full"></div>
+                           </motion.div>
+                        </div>
+                        <div className="mt-4 text-base font-bold font-mono text-teal-400">
+                           {jobStatus === 'uploading' ? uploadProgress : jobProgress}%
+                        </div>
+                     </motion.div>
                   )}
 
-                  {/* Video Player & Chat Section Side-by-Side */}
-                  <div className="mt-12 border-t border-slate-100 pt-10 animate-fade-in-up">
-                    <h3 className="text-2xl font-bold text-slate-800 mb-8 flex items-center">
-                      <div className="p-2.5 bg-indigo-100 rounded-xl mr-4">
-                        <FiMessageSquare className="h-6 w-6 text-indigo-600" />
-                      </div>
-                      Interactive Analysis
-                      <span className="ml-4 px-3 py-1.5 bg-gradient-to-r from-emerald-400 to-teal-500 text-white text-[10px] rounded-full font-bold uppercase tracking-widest shadow-sm">Powered by LangChain & Vector DB</span>
-                    </h3>
+                  {/* Video Player & Results */}
+                  {jobStatus === 'completed' && (
+                     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col gap-6 h-full pb-4">
+                        {/* Player */}
+                        <div className="flex-shrink-0 bg-black/50 border border-white/10 rounded-3xl overflow-hidden shadow-2xl relative aspect-video group backdrop-blur-md">
+                           <video ref={videoRef} src={URL.createObjectURL(file!)} controls className="w-full h-full object-contain" />
+                        </div>
 
-                    <div className="flex flex-col lg:flex-row gap-8 items-start">
+                        {jobResult && (
+                           <div className="flex flex-col gap-6 overflow-y-auto custom-scrollbar pr-1">
+                              {/* Metadata Grid */}
+                              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                                 <div className="bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl p-4 flex flex-col items-center justify-center text-center shadow-lg hover:bg-white/10 transition-colors">
+                                    <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-1">Duration</span>
+                                    <span className="text-xl font-bold text-slate-100">{jobResult.metadata.duration_seconds}s</span>
+                                 </div>
+                                 <div className="bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl p-4 flex flex-col items-center justify-center text-center shadow-lg hover:bg-white/10 transition-colors">
+                                    <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-1">FPS</span>
+                                    <span className="text-xl font-bold text-slate-100">{jobResult.metadata.fps}</span>
+                                 </div>
+                                 <div className="bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl p-4 flex flex-col items-center justify-center text-center shadow-lg hover:bg-white/10 transition-colors">
+                                    <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-1">Frames</span>
+                                    <span className="text-xl font-bold text-slate-100">{jobResult.metadata.total_frames}</span>
+                                 </div>
+                                 <div className="bg-gradient-to-br from-teal-500/20 to-indigo-500/10 backdrop-blur-md border border-teal-500/30 rounded-2xl p-4 flex flex-col items-center justify-center text-center relative overflow-hidden shadow-lg hover:bg-teal-500/20 transition-colors">
+                                    <span className="text-[10px] uppercase tracking-wider text-teal-300 font-bold mb-1 relative z-10">AI Time</span>
+                                    <span className="text-xl font-bold text-teal-100 relative z-10">{jobResult.metadata.process_time_seconds}s</span>
+                                 </div>
+                              </div>
 
-                      {/* Integrated Video Player - Takes up 40% on large screens */}
-                      <div className="w-full lg:w-[45%] bg-black rounded-[2rem] overflow-hidden shadow-2xl border-[6px] border-slate-800 flex items-center justify-center relative group aspect-video">
-                        {file ? (
-                          <video
-                            ref={videoRef}
-                            src={URL.createObjectURL(file)}
-                            controls
-                            className="w-full h-full object-contain bg-black"
-                          />
-                        ) : (
-                          <div className="text-slate-500 flex flex-col items-center">
-                            <FiVideo className="w-12 h-12 opacity-30 mb-3" />
-                            <p className="text-sm font-medium">Video playback unavailable</p>
-                          </div>
+                              {/* Keyframes */}
+                              {jobResult.keyframes && jobResult.keyframes.length > 0 && (
+                                 <div className="bg-white/5 backdrop-blur-md border border-white/10 rounded-3xl p-5 shadow-lg">
+                                    <h4 className="text-sm font-bold text-slate-200 mb-4 flex items-center gap-2">
+                                       <Video className="w-4 h-4 text-indigo-400" />
+                                       Extracted Keyframes
+                                    </h4>
+                                    <div className="flex gap-4 overflow-x-auto pb-4 custom-scrollbar">
+                                       {jobResult.keyframes.map((kf: any, idx: number) => (
+                                          <motion.div 
+                                             key={idx} 
+                                             whileHover={{ scale: 1.05, y: -5 }}
+                                             className="flex-shrink-0 relative group rounded-xl overflow-hidden border border-white/10 shadow-lg cursor-pointer bg-black"
+                                             onClick={() => {
+                                                if (videoRef.current) {
+                                                   videoRef.current.currentTime = kf.time;
+                                                   videoRef.current.play();
+                                                }
+                                             }}
+                                          >
+                                             <img src={`http://localhost:4000${kf.path}`} alt={`Frame at ${kf.time}s`} className="h-32 w-auto object-cover opacity-80 group-hover:opacity-100 transition-opacity" />
+                                             <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-2 border border-white/10 rounded-xl">
+                                                <span className="text-white text-xs font-bold px-2 py-1 bg-teal-500/90 rounded backdrop-blur-sm self-start shadow-lg flex items-center gap-1">
+                                                   ▶ {kf.time}s
+                                                </span>
+                                             </div>
+                                          </motion.div>
+                                       ))}
+                                    </div>
+                                 </div>
+                              )}
+                           </div>
                         )}
-                        <div className="absolute top-4 left-4 font-mono text-[10px] uppercase tracking-wider px-3 py-1.5 bg-black/70 text-white rounded-full backdrop-blur-md opacity-0 group-hover:opacity-100 transition-all duration-300 pointer-events-none">
-                          Source Video
+                     </motion.div>
+                  )}
+               </div>
+               
+               {/* Right Panel: Chat RAG */}
+               <div className="w-full lg:w-1/2 h-full bg-white/5 backdrop-blur-2xl border border-white/10 rounded-3xl shadow-2xl flex flex-col relative overflow-hidden">
+                  {/* Decorative Glow */}
+                  <div className="absolute top-[-20%] right-[-10%] w-[60%] h-[40%] bg-indigo-500/20 rounded-full blur-[120px] pointer-events-none"></div>
+
+                  <div className="p-6 border-b border-white/10 flex items-center justify-between z-10 bg-white/5 backdrop-blur-sm shadow-sm">
+                     <div className="flex items-center gap-4">
+                        <div className="p-2.5 bg-gradient-to-br from-indigo-500/20 to-teal-500/20 rounded-xl border border-white/10 text-indigo-300 shadow-inner">
+                           <MessageSquare className="w-5 h-5" />
                         </div>
-                      </div>
-
-                      {/* Conversational UI - Takes up 60% on large screens */}
-                      <div className="w-full lg:w-[55%] flex flex-col bg-white border border-slate-200 rounded-[2rem] shadow-xl shadow-slate-200/50 h-[550px] overflow-hidden relative">
-
-                        {/* Chat Messages Area */}
-                        <div className="flex-1 overflow-y-auto p-6 lg:p-8 space-y-6 bg-slate-50">
-                          {messages.length === 0 ? (
-                            <div className="flex flex-col items-center justify-center h-full text-center p-8 text-slate-400 fade-in">
-                              <div className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center mb-6 shadow-inner">
-                                <FiMessageSquare className="w-8 h-8 text-indigo-500" />
-                              </div>
-                              <p className="text-xl font-bold text-slate-600 mb-2">Vector Database Ready</p>
-                              <p className="text-sm leading-relaxed max-w-sm">Ask me any question about the video contents. I will search the transcript and cite the exact timestamp of where the answer is found.</p>
-                            </div>
-                          ) : (
-                            messages.map((msg, i) => (
-                              <div key={i} className={`flex w-full ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in-up`}>
-                                <div className={`max-w-[85%] rounded-3xl px-6 py-4 text-[15px] shadow-sm leading-relaxed ${msg.role === 'user'
-                                  ? 'bg-gradient-to-br from-indigo-500 to-blue-600 text-white rounded-tr-sm shadow-blue-500/20 font-medium whitespace-pre-wrap'
-                                  : 'bg-white border text-slate-700 border-slate-200/60 rounded-tl-sm'
-                                  }`}>
-                                  {msg.role === 'assistant' ? parseTextWithTimestamps(msg.text) : msg.text}
-                                </div>
-                              </div>
-                            ))
-                          )}
-
-                          {/* Loading Indicator */}
-                          {isChatting && (
-                            <div className="flex justify-start">
-                              <div className="bg-white border border-slate-200 text-slate-500 rounded-3xl rounded-tl-sm px-6 py-4 shadow-sm flex items-center space-x-2">
-                                <div className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce"></div>
-                                <div className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                                <div className="w-2 h-2 bg-indigo-600 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                              </div>
-                            </div>
-                          )}
+                        <div>
+                           <h2 className="text-lg font-bold text-slate-100 tracking-tight">AI Assistant</h2>
+                           <p className="text-xs font-medium text-slate-400">Ask about the video contents</p>
                         </div>
-
-                        {/* Input Area */}
-                        <div className="p-4 lg:p-5 bg-white border-t border-slate-100 flex items-center z-10 shadow-[0_-10px_40px_-15px_rgba(0,0,0,0.05)]">
-                          <input
-                            type="text"
-                            className="flex-1 bg-slate-100 border-transparent rounded-full px-6 py-4 text-sm focus:bg-white focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100/50 outline-none transition-all placeholder-slate-400 text-slate-700 font-medium"
-                            placeholder="Type your question..."
-                            value={chatInput}
-                            onChange={(e) => setChatInput(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' && !e.shiftKey) {
-                                e.preventDefault();
-                                handleSendMessage();
-                              }
-                            }}
-                            disabled={isChatting}
-                            autoComplete="off"
-                          />
-                          <button
-                            onClick={handleSendMessage}
-                            disabled={isChatting || !chatInput.trim()}
-                            className="ml-4 flex-shrink-0 w-14 h-14 bg-indigo-600 text-white rounded-full hover:bg-indigo-700 hover:shadow-lg hover:shadow-indigo-500/30 disabled:bg-slate-300 disabled:shadow-none transition-all flex items-center justify-center transform active:scale-95"
-                          >
-                            <FiSend className="w-5 h-5 -ml-1 mt-0.5" />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
+                     </div>
+                     <span className="px-3 py-1.5 bg-teal-500/10 text-teal-300 text-[10px] font-bold rounded-full uppercase tracking-widest border border-teal-500/20 shadow-sm">Vector RAG</span>
                   </div>
 
-                  <button
-                    onClick={resetState}
-                    className="mt-6 w-full py-2.5 bg-white border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition-colors font-medium text-sm shadow-sm"
-                  >
-                    Upload Another Video
-                  </button>
-                </div>
-              )}
+                  {/* Messages Area */}
+                  <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar z-10 relative">
+                     {messages.length === 0 ? (
+                        <div className="h-full flex flex-col items-center justify-center text-center opacity-80">
+                           <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ delay: 0.2 }} className="w-20 h-20 bg-gradient-to-br from-white/5 to-white/10 rounded-3xl flex items-center justify-center mb-6 border border-white/10 shadow-2xl">
+                              <MessageSquare className="w-10 h-10 text-indigo-400 drop-shadow-lg" />
+                           </motion.div>
+                           <motion.h3 initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.3 }} className="text-2xl font-bold text-slate-200 mb-3 tracking-tight">Analysis Complete</motion.h3>
+                           <motion.p initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.4 }} className="text-sm font-medium text-slate-400 max-w-sm leading-relaxed">
+                              I've indexed this video. Ask me anything, and I'll jump directly to the timestamp. Try asking <span className="text-indigo-400">"What happens at the beginning?"</span>
+                           </motion.p>
+                        </div>
+                     ) : (
+                        <AnimatePresence>
+                           {messages.map((msg, i) => (
+                              <motion.div 
+                                 key={i} 
+                                 initial={{ opacity: 0, y: 20, scale: 0.95 }} 
+                                 animate={{ opacity: 1, y: 0, scale: 1 }}
+                                 transition={{ type: "spring", stiffness: 400, damping: 25 }}
+                                 className={`flex w-full ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                              >
+                                 <div className={`max-w-[85%] rounded-3xl px-6 py-4 text-[15px] leading-relaxed shadow-xl ${
+                                    msg.role === 'user'
+                                       ? 'bg-gradient-to-br from-indigo-600 to-blue-600 text-white rounded-tr-sm border border-indigo-500/30'
+                                       : 'bg-white/10 backdrop-blur-md text-slate-200 rounded-tl-sm border border-white/10 shadow-[0_4px_30px_rgba(0,0,0,0.1)]'
+                                 }`}>
+                                    {msg.role === 'assistant' ? parseTextWithTimestamps(msg.text) : msg.text}
+                                 </div>
+                              </motion.div>
+                           ))}
+                        </AnimatePresence>
+                     )}
 
-              {jobStatus === 'error' && (
-                <button
-                  onClick={resetState}
-                  className="mt-4 w-full py-2.5 bg-red-50 text-red-600 rounded-xl hover:bg-red-100 transition-colors font-medium text-sm"
-                >
-                  Try Again
-                </button>
-              )}
+                     {isChatting && (
+                        <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="flex justify-start">
+                           <div className="bg-white/10 backdrop-blur-md border border-white/10 text-slate-400 rounded-3xl rounded-tl-sm px-6 py-5 shadow-xl flex items-center space-x-2">
+                              <motion.div className="w-2.5 h-2.5 bg-indigo-400 rounded-full" animate={{ y: [-3, 3, -3] }} transition={{ repeat: Infinity, duration: 0.6 }}></motion.div>
+                              <motion.div className="w-2.5 h-2.5 bg-teal-400 rounded-full" animate={{ y: [-3, 3, -3] }} transition={{ repeat: Infinity, duration: 0.6, delay: 0.1 }}></motion.div>
+                              <motion.div className="w-2.5 h-2.5 bg-indigo-500 rounded-full" animate={{ y: [-3, 3, -3] }} transition={{ repeat: Infinity, duration: 0.6, delay: 0.2 }}></motion.div>
+                           </div>
+                        </motion.div>
+                     )}
+                     <div ref={messagesEndRef} className="h-4" />
+                  </div>
 
-            </div>
-          )}
-        </div>
-      </div>
-      {/* Added some global tailwind utilities for animations since Next.js standard tailwind setup doesn't have these specific keyframes out of the box unless added to tailwind.config, but they work if injected or gracefully fallback. To be safe, adding standard inline tailwind utilities above is better. */}
+                  {/* Input Area */}
+                  <div className="p-5 bg-black/40 backdrop-blur-2xl border-t border-white/10 z-10 flex shadow-[0_-10px_40px_rgba(0,0,0,0.2)]">
+                     <div className="relative flex-1 flex items-center bg-white/5 border border-white/10 rounded-full focus-within:border-indigo-500/50 focus-within:bg-white/10 transition-all shadow-inner hover:bg-white/10">
+                        <input
+                           type="text"
+                           className="w-full bg-transparent border-none px-6 py-4 text-[15px] font-medium text-slate-200 focus:outline-none placeholder-slate-500"
+                           placeholder="Type your question..."
+                           value={chatInput}
+                           onChange={(e) => setChatInput(e.target.value)}
+                           onKeyDown={(e) => {
+                              if (e.key === 'Enter' && !e.shiftKey) {
+                                 e.preventDefault();
+                                 handleSendMessage();
+                              }
+                           }}
+                           disabled={isChatting || !jobStatus || jobStatus !== 'completed'}
+                        />
+                        <button
+                           onClick={handleSendMessage}
+                           disabled={isChatting || !chatInput.trim() || !jobStatus || jobStatus !== 'completed'}
+                           className="mr-2 p-3 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white rounded-full transition-all disabled:from-slate-700 disabled:to-slate-700 disabled:text-slate-500 active:scale-95 shadow-md disabled:shadow-none"
+                        >
+                           <Send className="w-5 h-5 ml-0.5" />
+                        </button>
+                     </div>
+                  </div>
+               </div>
+               
+           </div>
+        )}
+      </main>
     </div>
   );
 }
