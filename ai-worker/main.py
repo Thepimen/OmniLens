@@ -35,6 +35,7 @@ class VideoProcessRequest(BaseModel):
 class ChatRequest(BaseModel):
     video_id: str
     question: str
+    chat_history: list = []
 
 executor = ThreadPoolExecutor(max_workers=2)
 
@@ -95,7 +96,7 @@ async def chat_video(request: ChatRequest):
     loop = asyncio.get_event_loop()
     # Run the conversational pipeline in executor to prevent blocking
     result = await loop.run_in_executor(
-        executor, ask_video_question, request.video_id, request.question
+        executor, ask_video_question, request.video_id, request.question, request.chat_history
     )
     if result.get("status") == "error":
         raise HTTPException(status_code=500, detail=result.get("reason"))

@@ -4,9 +4,10 @@ from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_groq import ChatGroq
 from langchain_chroma import Chroma
-from langchain_core.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate, ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
+from langchain_core.messages import HumanMessage, AIMessage
 from dotenv import load_dotenv
 
 # Load environment variables (OPENAI_API_KEY, GROQ_API_KEY)
@@ -120,11 +121,14 @@ def format_docs(docs: List[Document]) -> str:
         formatted.append(f"Context {time_str}: {d.page_content}")
     return "\n\n".join(formatted)
 
-def ask_video_question(video_id: str, question: str) -> dict:
+def ask_video_question(video_id: str, question: str, chat_history: list = None) -> dict:
     """
     Retrieves context for a video_id from ChromaDB and uses LangChain LCEL
-    to generate an answer citing the exact timestamps.
+    to generate an answer citing the exact timestamps, remembering chat_history.
     """
+    if chat_history is None:
+        chat_history = []
+        
     try:
         if not os.environ.get("GROQ_API_KEY"):
             return {"status": "error", "reason": "GROQ_API_KEY is missing from .env"}
@@ -137,29 +141,42 @@ def ask_video_question(video_id: str, question: str) -> dict:
             search_kwargs={"k": 4, "filter": {"video_id": video_id}}
         )
         
-        # 2. Prompt Engineering
+        # 2. Prepare History Messages
+        history_msgs = []
+        for msg in chat_history:
+            if msg.get('role') == 'user':
+                history_msgs.append(HumanMessage(content=msg.get('content')))
+            elif msg.get('role') == 'assistant':
+                history_msgs.append(AIMessage(content=msg.get('content')))
+        
+        # 3. Prompt Engineering
         # Strict instructions to use the [MM:SS] format from the formatted docs
-        prompt_template = """You are an AI assistant analyzing a video.
-Use the following pieces of retrieved context to answer the question.
+        system_prompt = """You are an AI assistant analyzing a video.
+Use the following pieces of retrieved context to answer the question. 
+The context may contain parts of the video transcript that are relevant to the user's question or the conversation history.
 Each piece of context has a timestamp in the format [MM:SS].
-When you use information from a context piece, you MUST cite its exact timestamp in your answer.
+
+CRITICAL RULE: When you use information from a context piece, you MUST cite its exact timestamp in your answer using the format [MM:SS].
 Example: "The marketing budget was reduced by 20% [12:34]."
+
 If you don't know the answer, just say that you don't know.
 
 Context:
-{context}
+{context}"""
 
-Question: {question}
-
-Answer:"""
-        prompt = PromptTemplate.from_template(prompt_template)
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            MessagesPlaceholder(variable_name="history"),
+            ("human", "{question}")
+        ])
         
-        # 3. LLM Setup - Using Groq's high-speed cloud endpoint
+        # 4. LLM Setup - Using Groq's high-speed cloud endpoint
         llm = ChatGroq(model_name="llama-3.1-8b-instant", temperature=0)
         
-        # 4. LCEL Generation Chain
+        # 5. LCEL Generation Chain
+        # We pass history manually via RunnablePassthrough.assign
         rag_chain = (
-            {"context": retriever | format_docs, "question": RunnablePassthrough()}
+            {"context": retriever | format_docs, "question": RunnablePassthrough(), "history": lambda x: history_msgs}
             | prompt
             | llm
             | StrOutputParser()

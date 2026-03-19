@@ -81,7 +81,7 @@ app.post('/api/upload', upload.single('video'), async (req, res) => {
 
 app.post('/api/chat', async (req, res) => {
     try {
-        const { video_id, question } = req.body;
+        const { video_id, question, chat_history } = req.body;
 
         if (!video_id || !question) {
             return res.status(400).json({ status: 'error', reason: 'Missing video_id or question' });
@@ -89,7 +89,8 @@ app.post('/api/chat', async (req, res) => {
 
         const pythonResponse = await axios.post('http://localhost:8001/api/chat', {
             video_id,
-            question
+            question,
+            chat_history: chat_history || []
         });
 
         res.json(pythonResponse.data);

@@ -8,6 +8,7 @@ import {
   UploadCloud, FileVideo, Activity, Video, Send, MessageSquare, Plus,
   Settings, Download, Trash2, MoreVertical, X
 } from 'lucide-react';
+import { toast } from 'sonner';
 
 interface Keyframe {
   path: string;
@@ -74,8 +75,15 @@ export default function Home() {
     socket.on('job_failed', (data: { jobId: string, error: string }) => {
       if (data.jobId === jobId) {
         setJobStatus('error'); setJobMessage(`Error: ${data.error}`);
+        toast.error(`Analysis failed: ${data.error}`);
       }
     });
+    
+    socket.on('disconnect', () => {
+      console.log('Disconnected from API Gateway');
+      toast.error('Connection to server lost.');
+    });
+
     return () => { socket.disconnect(); };
   }, [jobId, file]);
 
@@ -88,6 +96,19 @@ export default function Home() {
       setUploadProgress(0); setMessages([]); setChatInput(''); setUploading(false);
       
       setFile(selectedFile);
+    }
+  }, []);
+
+  const onDropRejected = useCallback((fileRejections: any[]) => {
+    if (fileRejections.length > 0) {
+      const error = fileRejections[0].errors[0];
+      if (error.code === 'file-invalid-type') {
+         toast.error("Formato no soportado. Sube un archivo MP4 o MOV.");
+      } else if (error.code === 'file-too-large') {
+         toast.error("El archivo supera el tamaño máximo de 500MB.");
+      } else {
+         toast.error(`Error al subir: ${error.message}`);
+      }
     }
   }, []);
 
@@ -167,6 +188,10 @@ export default function Home() {
   const handleSendMessage = async () => {
     if (!chatInput.trim() || !jobId) return;
     const userMsg = chatInput;
+    
+    // Map existing messages to strict chat_history format before adding the new user message
+    const chatHistory = messages.map(m => ({ role: m.role, content: m.text }));
+    
     setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
     setChatInput('');
     setIsChatting(true);
@@ -175,28 +200,37 @@ export default function Home() {
       const res = await fetch('http://localhost:4000/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ video_id: jobId, question: userMsg })
+        body: JSON.stringify({ 
+          video_id: jobId, 
+          question: userMsg,
+          chat_history: chatHistory
+        })
       });
+      
       const data = await res.json();
+      
       if (data.status === 'success') {
         setMessages(prev => [...prev, { role: 'assistant', text: data.answer }]);
       } else {
-        setMessages(prev => [...prev, { role: 'assistant', text: 'Error: ' + data.reason }]);
+        toast.error(`Chat Error: ${data.reason}`);
+        // Remove the user message logic if it failed, or just append an error. For premium feel, toast is better.
       }
     } catch (error) {
-      setMessages(prev => [...prev, { role: 'assistant', text: 'Network connection failed.' }]);
+      toast.error('Network connection failed. Could not reach AI.');
     } finally {
       setIsChatting(false);
     }
   };
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop, 
+    onDrop,
+    onDropRejected,
     accept: { 
       'video/mp4': ['.mp4'], 
       'video/quicktime': ['.mov'], 
       'video/x-m4v': ['.m4v'] 
     }, 
+    maxSize: 500 * 1024 * 1024, // 500MB
     maxFiles: 1,
     multiple: false
   });
