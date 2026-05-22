@@ -6,9 +6,10 @@ import os
 import time
 import whisper
 import asyncio
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 
-from rag_pipeline import process_and_store_embeddings, ask_video_question
+from rag_pipeline import process_and_store_embeddings, ask_video_question, db_repo, vector_repo
 
 # Make sure whisper can find ffmpeg.exe downloaded in this directory
 os.environ["PATH"] += os.pathsep + os.path.dirname(os.path.abspath(__file__))
@@ -155,6 +156,20 @@ async def process_video(request: VideoProcessRequest):
         process_time = round(time.time() - start_time, 2)
         print(f"Finished processing job {request.jobId} in {process_time}s")
         
+        # 4. Save to Relational SQLite DB (making it cloud-ready for PostgreSQL)
+        metadata_record = {
+            "id": request.jobId,
+            "filename": os.path.basename(request.filePath),
+            "duration_seconds": duration,
+            "fps": fps,
+            "total_frames": total_frames,
+            "process_time_seconds": process_time,
+            "transcript_text": transcript_result["text"],
+            "keyframes": extracted_frames
+        }
+        db_repo.save(metadata_record)
+        print(f"Saved video analysis history in relational database for job {request.jobId}")
+        
         return {
             "status": "success",
             "metadata": {
@@ -171,6 +186,67 @@ async def process_video(request: VideoProcessRequest):
     except Exception as e:
         print(f"Error processing video: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# ==========================================
+# HISTORY & HOUSEKEEPING REST ENDPOINTS
+# ==========================================
+
+@app.get("/api/videos")
+async def list_videos():
+    """List chronological history of analyzed videos"""
+    try:
+        return db_repo.list_all()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database retrieval failure: {e}")
+
+@app.get("/api/videos/{video_id}")
+async def get_video(video_id: str):
+    """Retrieve all metadata and transcript for a specific historical video"""
+    try:
+        video = db_repo.get_by_id(video_id)
+        if not video:
+            raise HTTPException(status_code=404, detail="Video analysis not found in history")
+        return video
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=500, detail=f"Database retrieval failure: {e}")
+
+@app.delete("/api/videos/{video_id}")
+async def delete_video(video_id: str):
+    """Purge a video record from relational DB, vector DB, and clear keyframes from filesystem"""
+    try:
+        # Retrieve first to confirm existance
+        record = db_repo.get_by_id(video_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="Video analysis not found in history")
+        
+        # 1. Delete relational DB record
+        db_repo.delete(video_id)
+        
+        # 2. Delete vectors
+        vector_repo.delete_index(video_id)
+        
+        # 3. Purge keyframes folder
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        frames_dir = os.path.join(base_dir, "uploads", "frames", video_id)
+        if os.path.exists(frames_dir):
+            shutil.rmtree(frames_dir)
+            print(f"Purged extracted keyframes folder: {frames_dir}")
+            
+        # 4. Also clean up the main video upload file if desired
+        video_filename = record.get("filename")
+        if video_filename:
+            video_filepath = os.path.join(base_dir, "uploads", video_filename)
+            if os.path.exists(video_filepath):
+                os.remove(video_filepath)
+                print(f"Deleted source video file: {video_filepath}")
+                
+        return {"status": "success", "message": f"Successfully purged all data for video {video_id}"}
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=500, detail=f"Database purge failure: {e}")
 
 if __name__ == "__main__":
     import uvicorn

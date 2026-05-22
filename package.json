@@ -1,0 +1,16 @@
+{
+  "name": "omnilens-monorepo",
+  "version": "1.0.0",
+  "description": "OmniLens - Monorepo Orchestration",
+  "private": true,
+  "scripts": {
+    "install:all": "npm install --prefix api-gateway && npm install --prefix frontend",
+    "start:gateway": "cd api-gateway && npm start",
+    "start:frontend": "cd frontend && npm run dev",
+    "start:worker": "cd ai-worker && uvicorn main:app --host 0.0.0.0 --port 8001",
+    "start": "concurrently --kill-others \"npm run start:gateway\" \"npm run start:frontend\" \"npm run start:worker\""
+  },
+  "dependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

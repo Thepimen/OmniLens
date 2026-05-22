@@ -1,0 +1,86 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:alpine
+    container_name: omnilens_redis
+    ports:
+      - "6379:6379"
+    restart: always
+    networks:
+      - omnilens_network
+
+  ai-worker:
+    build:
+      context: ./ai-worker
+      dockerfile: Dockerfile
+    container_name: omnilens_ai_worker
+    ports:
+      - "8001:8000"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - VECTOR_DB_PROVIDER=chroma
+      - DATABASE_URL=sqlite:////app/db/metadata.db
+      # Add placeholders for keys that user can configure in their .env
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    volumes:
+      - shared_uploads:/uploads
+      - chroma_data:/app/chroma_db
+      - sqlite_data:/app/db
+    depends_on:
+      - redis
+    restart: always
+    networks:
+      - omnilens_network
+
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    container_name: omnilens_api_gateway
+    ports:
+      - "4000:4000"
+    environment:
+      - PORT=4000
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - AI_WORKER_URL=http://ai-worker:8000
+    volumes:
+      - shared_uploads:/uploads
+    depends_on:
+      - redis
+      - ai-worker
+    restart: always
+    networks:
+      - omnilens_network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: omnilens_frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - NEXT_PUBLIC_API_URL=http://localhost:4000
+    depends_on:
+      - api-gateway
+    restart: always
+    networks:
+      - omnilens_network
+
+volumes:
+  shared_uploads:
+    name: omnilens_shared_uploads
+  chroma_data:
+    name: omnilens_chroma_data
+  sqlite_data:
+    name: omnilens_sqlite_data
+
+networks:
+  omnilens_network:
+    name: omnilens_network
+    driver: bridge

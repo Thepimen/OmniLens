@@ -8,3 +8,6 @@ python-dotenv
 langchain-huggingface
 langchain-groq
 sentence-transformers
+sqlalchemy
+opencv-python-headless
+openai-whisper

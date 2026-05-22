@@ -33,6 +33,9 @@ if (!fs.existsSync(framesDir)) {
 
 // Serve the extracted frames statically so frontend can access them
 app.use('/frames', express.static(framesDir));
+// Serve source videos statically so history items can stream directly
+app.use('/videos', express.static(uploadDir));
+
 
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
@@ -46,9 +49,13 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage: storage });
 
-// BullMQ Setup (default redis connection at localhost:6379)
-const connection = { host: 'localhost', port: 6379 };
+// BullMQ Setup (environment driven redis connection)
+const REDIS_HOST = process.env.REDIS_HOST || 'localhost';
+const REDIS_PORT = parseInt(process.env.REDIS_PORT || '6379', 10);
+const connection = { host: REDIS_HOST, port: REDIS_PORT };
 const videoQueue = new Queue('video-processing', { connection });
+const AI_WORKER_URL = process.env.AI_WORKER_URL || 'http://localhost:8001';
+
 
 app.get('/api/health', (req, res) => {
     res.json({ status: 'API Gateway OK' });
@@ -87,7 +94,7 @@ app.post('/api/chat', async (req, res) => {
             return res.status(400).json({ status: 'error', reason: 'Missing video_id or question' });
         }
 
-        const pythonResponse = await axios.post('http://localhost:8001/api/chat', {
+        const pythonResponse = await axios.post(`${AI_WORKER_URL}/api/chat`, {
             video_id,
             question,
             chat_history: chat_history || []
@@ -100,6 +107,43 @@ app.post('/api/chat', async (req, res) => {
     }
 });
 
+app.get('/api/videos', async (req, res) => {
+    try {
+        const pythonResponse = await axios.get(`${AI_WORKER_URL}/api/videos`);
+        res.json(pythonResponse.data);
+    } catch (error) {
+        console.error('List videos error:', error.message);
+        res.status(500).json({ status: 'error', reason: 'Failed to retrieve video history from AI Worker' });
+    }
+});
+
+app.get('/api/videos/:id', async (req, res) => {
+    try {
+        const pythonResponse = await axios.get(`${AI_WORKER_URL}/api/videos/${req.params.id}`);
+        res.json(pythonResponse.data);
+    } catch (error) {
+        console.error('Get video error:', error.message);
+        if (error.response && error.response.status === 404) {
+            return res.status(404).json({ status: 'error', reason: 'Video not found in history' });
+        }
+        res.status(500).json({ status: 'error', reason: 'Failed to retrieve video details from AI Worker' });
+    }
+});
+
+app.delete('/api/videos/:id', async (req, res) => {
+    try {
+        const pythonResponse = await axios.delete(`${AI_WORKER_URL}/api/videos/${req.params.id}`);
+        res.json(pythonResponse.data);
+    } catch (error) {
+        console.error('Delete video error:', error.message);
+        if (error.response && error.response.status === 404) {
+            return res.status(404).json({ status: 'error', reason: 'Video not found in history' });
+        }
+        res.status(500).json({ status: 'error', reason: 'Failed to delete video from AI Worker' });
+    }
+});
+
+
 // BullMQ Worker to process jobs
 const worker = new Worker('video-processing', async job => {
     io.emit('job_processing', { jobId: job.id, progress: 10, message: 'Starting AI analysis' });
@@ -108,7 +152,7 @@ const worker = new Worker('video-processing', async job => {
         // Forward the file path to python worker to simulate heavy processing
         io.emit('job_processing', { jobId: job.id, progress: 30, message: 'Extracting audio & frames' });
 
-        const pythonResponse = await axios.post('http://localhost:8001/worker/process', {
+        const pythonResponse = await axios.post(`${AI_WORKER_URL}/worker/process`, {
             filePath: job.data.filePath,
             jobId: job.id
         });
